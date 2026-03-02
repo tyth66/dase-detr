@@ -1,0 +1,61 @@
+__include__: [
+  './dfine_hgnetv2_n.yml',
+]
+
+output_dir: ./runs/ASW_DETR/dfine
+
+DEIM:
+  encoder: DASE_Encoder
+
+DASE_Encoder:
+  in_channels: [256, 512, 1024]
+  feat_strides: [8, 16, 32]
+
+  # intra
+  hidden_dim: 128
+  dim_feedforward: 512
+  use_encoder_idx: [0, 2]
+  nhead: 8
+  dropout: 0.1
+
+  k_ratio: [0.25, 0.5, 0.75]
+  win_size: [5, 3, 3]
+  input_size: [80, 40, 20]
+
+  # cross
+  expansion: 0.34
+  depth_mult: 0.5
+  act: 'silu'
+
+
+optimizer:
+  type: AdamW
+  params:
+    -
+      params: '^(?=.*backbone)(?!.*norm|bn).*$'
+      lr: 0.0001
+    -
+      params: '^(?=.*backbone)(?=.*norm|bn).*$'
+      lr: 0.0001
+      weight_decay: 0.
+
+  lr: 0.0008
+  betas: [0.9, 0.999]
+  weight_decay: 0.0001
+
+
+# Increase to search for the optimal ema
+epoches: 132 # 148 + 4n
+train_dataloader:
+  total_batch_size: 8
+  dataset:
+    transforms:
+      policy:
+        epoch: 120
+  collate_fn:
+    stop_epoch: 120
+    ema_restart_decay: 0.9999
+    base_size_repeat: ~
+
+val_dataloader:
+  total_batch_size: 8
