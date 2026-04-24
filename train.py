@@ -65,13 +65,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # priority 0
-    parser.add_argument('-c', '--config', type=str, required=True)
+    parser.add_argument('-c', '--config', type=str, default='configs/dase_detr/dase_rtdetr_n.yml')
     parser.add_argument('-r', '--resume', type=str, help='resume from checkpoint')
     parser.add_argument('-t', '--tuning', type=str, help='tuning from checkpoint')
-    parser.add_argument('-d', '--device', type=str, help='device',)
-    parser.add_argument('--seed', type=int, help='exp reproducibility')
-    parser.add_argument('--use-amp', action='store_true', help='auto mixed precision training')
-    parser.add_argument('--output-dir', type=str, help='output directoy')
+    parser.add_argument('-d', '--device', type=str)
+    parser.add_argument('--seed', type=int, default='0')
+    parser.add_argument('--use-amp', action='store_true', default=True)
+    parser.add_argument('--output-dir', type=str, default='./visdrone/SOTA/dase_rtdetr_n')
     parser.add_argument('--summary-dir', type=str, help='tensorboard summry')
     parser.add_argument('--test-only', action='store_true', default=False,)
 

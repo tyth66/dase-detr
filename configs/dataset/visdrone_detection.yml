@@ -11,8 +11,8 @@ train_dataloader:
   type: DataLoader
   dataset: 
     type: CocoDetection
-    img_folder: /home/xiao/Models/DEIM/DATA/visdrone/train2017
-    ann_file: /home/xiao/Models/DEIM/DATA/visdrone/annotations/instances_train2017.json
+    img_folder: /home/xiao/tyth/Models/data/visdrone/train2017
+    ann_file: /home/xiao/tyth/Models/data/visdrone/annotations/instances_train2017.json
     return_masks: False
     transforms:
       type: Compose
@@ -28,8 +28,8 @@ val_dataloader:
   type: DataLoader
   dataset: 
     type: CocoDetection
-    img_folder: /home/xiao/Models/DEIM/DATA/visdrone/val2017
-    ann_file: /home/xiao/Models/DEIM/DATA/visdrone/annotations/instances_val2017.json
+    img_folder: /home/xiao/tyth/Models/data/visdrone/val2017
+    ann_file: /home/xiao/tyth/Models/data/visdrone/annotations/instances_val2017.json
     return_masks: False
     transforms:
       type: Compose

@@ -18,8 +18,8 @@ DASE_Encoder:
   nhead: 8
   dropout: 0.1
 
-  k_ratio: [0.25, 0.5, 0.75]
-  win_size: [5, 3, 3]
+  k_ratio: [0.25, None, 0.75]
+  win_size: [5, None, 3]
   input_size: [80, 40, 20]
 
   # cross
@@ -33,10 +33,10 @@ optimizer:
   params:
     -
       params: '^(?=.*backbone)(?!.*norm|bn).*$'
-      lr: 0.0001
+      lr: 0.0004
     -
       params: '^(?=.*backbone)(?=.*norm|bn).*$'
-      lr: 0.0001
+      lr: 0.0004
       weight_decay: 0.
 
   lr: 0.0008

@@ -1,75 +1,30 @@
-absl-py==2.3.1
-accelerate==1.10.1
-brotlicffi @ file:///croot/brotlicffi_1736182461069/work
-calflops==0.3.2
-certifi @ file:///croot/certifi_1754570635119/work/certifi
-cffi @ file:///croot/cffi_1736182485317/work
-charset-normalizer @ file:///croot/charset-normalizer_1721748349566/work
-contourpy==1.3.3
-cycler==0.12.1
-einops==0.8.1
-faster-coco-eval==1.6.8
-filelock @ file:///croot/filelock_1744281381737/work
-fonttools==4.60.0
-fsspec==2024.6.1
-fvcore==0.1.5.post20221221
-gmpy2 @ file:///croot/gmpy2_1738085463648/work
-grpcio==1.75.0
-hf-xet==1.1.10
-huggingface-hub==0.35.0
-idna @ file:///croot/idna_1714398848350/work
-iniconfig==2.1.0
-iopath==0.1.10
-Jinja2 @ file:///croot/jinja2_1741710844255/work
-kiwisolver==1.4.9
-Markdown==3.9
-MarkupSafe @ file:///croot/markupsafe_1738584038848/work
-matplotlib==3.10.6
-mkl-service==2.4.0
-mkl_fft @ file:///io/mkl313/mkl_fft_1730824109137/work
-mkl_random @ file:///io/mkl313/mkl_random_1730823916628/work
-mpmath @ file:///work/perseverance-python-buildout/croot/mpmath_1698864994882/work
-networkx @ file:///croot/networkx_1756709277056/work
-ninja==1.13.0
-numpy @ file:///croot/numpy_and_numpy_base_1725470312869/work/dist/numpy-2.0.1-cp312-cp312-linux_x86_64.whl#sha256=e2374991344fa2241a2153ef3d550d3a1cd2d50cb1f1d51eddc82870abc88021
-packaging==25.0
-pandas==2.3.2
-pillow @ file:///croot/pillow_1752524526621/work
-pluggy==1.6.0
-portalocker==3.2.0
-protobuf==6.32.1
-psutil==7.1.0
-pycparser @ file:///home/task_175749564075091/conda-bld/pycparser_1757496039511/work
-Pygments==2.19.2
-pyparsing==3.2.4
-PySocks @ file:///work/perseverance-python-buildout/croot/pysocks_1698845478203/work
-pytest==8.4.2
-python-dateutil==2.9.0.post0
-pytz==2025.2
-PyYAML @ file:///croot/pyyaml_1728657952215/work
-regex==2025.9.18
-requests @ file:///croot/requests_1756709366904/work
-safetensors==0.6.2
-scipy==1.16.2
-seaborn==0.13.2
-setuptools==78.1.1
-six==1.17.0
-sympy==1.13.1
-tabulate==0.9.0
-tensorboard==2.20.0
-tensorboard-data-server==0.7.2
-termcolor==3.1.0
-timm==0.4.12
-tokenizers==0.22.1
-torch==2.5.1
-torchaudio==2.5.1
-torchvision==0.20.1
-tqdm==4.67.1
-transformers==4.56.2
-triton==3.1.0
-typing_extensions @ file:///croot/typing_extensions_1756280817316/work
-tzdata==2025.2
-urllib3 @ file:///croot/urllib3_1750775463400/work
-Werkzeug==3.1.3
-wheel==0.45.1
-yacs==0.1.8
+# Core training / evaluation dependencies
+# Install torch / torchvision with a matching CUDA or CPU build for your machine.
+torch
+torchvision>=0.15.2
+numpy
+scipy
+Pillow
+PyYAML
+packaging
+tensorboard
+timm
+faster-coco-eval
+sympy
+tqdm
+
+# Common utility scripts
+opencv-python
+matplotlib
+
+# ONNX export / inference
+onnx
+onnxruntime
+onnxsim
+onnxslim
+
+# Optional TensorRT / profiling / graph tooling
+# These packages are mainly for Linux + NVIDIA environments and the related tools under tools/.
+tensorrt
+calflops
+onnx-graphsurgeon

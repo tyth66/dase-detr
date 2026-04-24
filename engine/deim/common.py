@@ -2,41 +2,96 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+def _resolve_dynamic_groups(dim, dynamic_groups):
+    if dynamic_groups is None:
+        dynamic_groups = max(1, dim // 64)
+    dynamic_groups = max(1, min(dynamic_groups, dim))
+    while dim % dynamic_groups != 0 and dynamic_groups > 1:
+        dynamic_groups -= 1
+    return dynamic_groups
+
+
 class DynamicDWConv(nn.Module):
     def __init__(self, dim, win_size):
         super().__init__()
-        self.dw_conv = nn.Conv2d(dim, dim, kernel_size=win_size, padding=win_size//2, groups=dim, bias=False)
+        self.dim = dim
+        self.win_size = win_size
+        self.padding = win_size // 2
+        self.dw_conv = nn.Conv2d(dim, dim, kernel_size=win_size, padding=self.padding, groups=dim, bias=False)
+        self.pw_conv = nn.Conv2d(dim, dim, kernel_size=1, bias=False)
 
         self.dynamic_kernel = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(dim, dim//4, 1),
             nn.GELU(),
-            nn.Conv2d(dim//4, win_size**2, 1))
+            nn.Conv2d(dim//4, dim * win_size**2, 1))
         
     def forward(self, x):
-        base_weights = self.dw_conv.weight
-        dynamic_weights = self.dynamic_kernel(x).view(x.size(0), 1, self.dw_conv.kernel_size[0], -1)
-        fused_weights = base_weights + dynamic_weights.mean(dim=0, keepdim=True)
-        return F.conv2d(x, fused_weights, padding=self.dw_conv.padding[0], groups=x.size(1))
+        B, C, H, W = x.shape
+        base_weights = self.dw_conv.weight.unsqueeze(0)  # [1, C, 1, k, k]
+        dynamic_weights = self.dynamic_kernel(x).view(B, C, 1, self.win_size, self.win_size)
+        fused_weights = base_weights + dynamic_weights
+        x = x.reshape(1, B * C, H, W)
+        fused_weights = fused_weights.reshape(B * C, 1, self.win_size, self.win_size)
+        out = F.conv2d(x, fused_weights, padding=self.padding, groups=B * C)
+        out = out.view(B, C, H, W)
+        return self.pw_conv(out)
+
+
+class GroupDynamicDWConv(nn.Module):
+    def __init__(self, dim, win_size, reduction=4, dynamic_groups=None):
+        super().__init__()
+        self.dim = dim
+        self.win_size = win_size
+        self.padding = win_size // 2
+        self.dynamic_groups = _resolve_dynamic_groups(dim, dynamic_groups)
+        self.channels_per_group = dim // self.dynamic_groups
+
+        self.dw_conv = nn.Conv2d(dim, dim, kernel_size=win_size, padding=self.padding, groups=dim, bias=False)
+        hidden_dim = max(1, dim // reduction)
+        self.dynamic_kernel = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(dim, hidden_dim, 1),
+            nn.GELU(),
+            nn.Conv2d(hidden_dim, self.dynamic_groups * win_size**2, 1),
+        )
+        self.channel_gate = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(dim, hidden_dim, 1),
+            nn.GELU(),
+            nn.Conv2d(hidden_dim, dim, 1),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        base_weights = self.dw_conv.weight.view(1, self.dynamic_groups, self.channels_per_group, 1, self.win_size, self.win_size)
+        dynamic_weights = self.dynamic_kernel(x).view(B, self.dynamic_groups, 1, 1, self.win_size, self.win_size)
+        fused_weights = (base_weights + dynamic_weights).reshape(B * C, 1, self.win_size, self.win_size)
+        out = F.conv2d(x.reshape(1, B * C, H, W), fused_weights, padding=self.padding, groups=B * C)
+        out = out.view(B, C, H, W)
+        return out * self.channel_gate(x)
 
 
 class MultiSaliencyScorer(nn.Module):
     "Multiscale significance scoring network"
-    def __init__(self, in_channels, kernel_sizes=[3, 5, 7], reduction=4):
+    def __init__(self, in_channels, kernel_sizes=[3, 5, 7], reduction=4, dynamic_groups=None):
         super().__init__()
         self.in_channels = in_channels
         self.kernel_sizes = kernel_sizes
         self.num_scales = len(kernel_sizes)
-        
-        self.branches = nn.ModuleList([DynamicDWConv(in_channels, k) for k in kernel_sizes])
+
+        self.branches = nn.ModuleList(
+            [GroupDynamicDWConv(in_channels, k, reduction=reduction, dynamic_groups=dynamic_groups) for k in kernel_sizes]
+        )
         self.fuse_attn = nn.Sequential(
-            nn.Conv2d(in_channels * self.num_scales, in_channels // reduction, 1, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(in_channels // reduction, self.num_scales, 1, padding=1),
+            nn.Conv2d(in_channels * self.num_scales, in_channels // reduction, 1),
+            nn.GELU(),
+            nn.Conv2d(in_channels // reduction, self.num_scales, 1),
             nn.AdaptiveAvgPool2d(1),
             nn.Softmax(dim=1))
-
-        self.softmax = nn.Softmax(dim=1)
+        self.channel_proj = nn.Conv2d(in_channels, 1, 1, bias=False)
 
     def forward(self, x):
         B, C, H, W = x.shape
@@ -44,55 +99,26 @@ class MultiSaliencyScorer(nn.Module):
         weights = self.fuse_attn(feats)  # [B, num_scales, 1, 1]
         weights = weights.view(B, self.num_scales, 1, 1, 1)  # [B, num_scales, 1, 1, 1]
         feats = feats.view(B, self.num_scales, C, H, W)  # [B, num_scales, C, H, W]
-        out = (feats * weights).sum(dim=1)  # [B, C, H, W]
-        return out
+        fused = (feats * weights).sum(dim=1)  # [B, C, H, W]
+        saliency_logits = self.channel_proj(fused).flatten(1)  # [B, H * W]
+        saliency_map = F.softmax(saliency_logits, dim=-1).view(B, H, W)
+        return saliency_map
 
 
-class SpatialAttention(nn.Module):
-    def __init__(self, dim):
-        super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(dim, dim//8, 1),
-            nn.GELU())
-        self.fc_h = nn.Linear(dim//8, dim//8)
-        self.fc_w = nn.Linear(dim//8, dim//8)
-        self.final_conv = nn.Sequential(
-            nn.Conv2d(dim//8, 1, 1),
-            nn.Sigmoid())
-        
-    def forward(self, x):
-        feat = self.conv(x)
-        h_avg = F.adaptive_avg_pool2d(feat, (None, 1))
-        h_attn = torch.sigmoid(self.fc_h(h_avg.squeeze(-1).permute(0,2,1)).permute(0,2,1).unsqueeze(-1))
-        w_avg = F.adaptive_avg_pool2d(feat, (1, None))
-        w_attn = torch.sigmoid(self.fc_w(w_avg.squeeze(-2).permute(0,2,1)).permute(0,2,1).unsqueeze(-2))
-        attn = self.final_conv(feat * h_attn * w_attn)
-        return attn
-    
-
-class ChannelAttention(nn.Module):
+class SqueezeExcite(nn.Module):
     def __init__(self, dim, reduction=4):
         super().__init__()
+        hidden_dim = max(1, dim // reduction)
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.multi_scale = nn.ModuleList([
-            nn.Sequential(
-                nn.Conv2d(dim, dim//reduction, 1),
-                nn.GELU()),
-            nn.Sequential(
-                nn.Conv2d(dim, dim//reduction, 1),
-                nn.GELU(),
-                nn.Conv2d(dim//reduction, dim//reduction, 3, padding=1, groups=dim//reduction),
-                nn.GELU())])
-        
-        self.fusion = nn.Sequential(
-            nn.Conv2d(2*(dim//reduction), dim, 1),
-            nn.Sigmoid())
-        
+        self.fc = nn.Sequential(
+            nn.Conv2d(dim, hidden_dim, 1),
+            nn.GELU(),
+            nn.Conv2d(hidden_dim, dim, 1),
+            nn.Sigmoid(),
+        )
+
     def forward(self, x):
-        global_feat = self.avg_pool(x)
-        feats = [conv(global_feat) for conv in self.multi_scale]
-        fused = self.fusion(torch.cat(feats, dim=1))
-        return fused
+        return self.fc(self.avg_pool(x))
 
 class DynamicSpatialRefine(nn.Module):
     def __init__(self, dim, win_size=5, reduction=8):
@@ -102,8 +128,7 @@ class DynamicSpatialRefine(nn.Module):
         self.dim = dim
         
         self.dw_conv = DynamicDWConv(dim, win_size)
-        self.gate = SpatialAttention(dim)
-        self.se = ChannelAttention(dim, reduction) 
+        self.se = SqueezeExcite(dim, reduction)
         self.proj = nn.Sequential(
             nn.Conv2d(dim, dim, kernel_size=1),
             nn.GELU())
@@ -118,10 +143,7 @@ class DynamicSpatialRefine(nn.Module):
         x = x.view(B * K, win_size, win_size, C).permute(0, 3, 1, 2)
         feat = self.dw_conv(x)
         feat = self.group_conv(feat)
-        gate_weight = self.gate(feat)
-        feat = feat * gate_weight
-        se_weight = self.se(feat)
-        feat = feat * se_weight
+        feat = feat * self.se(feat)
         out = self.proj(feat)
         out = out.permute(0, 2, 3, 1).reshape(B, K, P, C)
 
@@ -133,14 +155,15 @@ class SparseTokenAttention(nn.Module):
         self.dim = dim
         self.heads = heads
         self.scale = (dim // heads) ** -0.5
+        ffn_hidden_dim = min(dim_feedforward, dim * 2)
 
         self.qkv_proj = nn.Linear(dim, dim * 3)
         self.out_proj = nn.Linear(dim, dim)
         self.norm1 = nn.LayerNorm(dim)
         self.ffn = nn.Sequential(
-            nn.Linear(dim, dim_feedforward),
+            nn.Linear(dim, ffn_hidden_dim),
             nn.GELU(),
-            nn.Linear(dim_feedforward, dim))
+            nn.Linear(ffn_hidden_dim, dim))
         self.norm2 = nn.LayerNorm(dim)
         self.dropout = nn.Dropout(dropout)
 
@@ -174,9 +197,11 @@ class SparseTokenAttention(nn.Module):
         residual = x
         x_norm = self.norm1(x)
 
-        coords = coords.long().clamp(0, self.sincos_pos_embed.shape[0] - 1)  # H
-        h = coords[..., 0]
-        w = coords[..., 1]
+        coords = coords.long()
+        max_h = self.sincos_pos_embed.shape[0] - 1
+        max_w = self.sincos_pos_embed.shape[1] - 1
+        h = coords[..., 0].clamp(0, max_h)
+        w = coords[..., 1].clamp(0, max_w)
         pos_embed = self.sincos_pos_embed[h, w]  # [B, K, C]
         x_norm = x_norm + pos_embed
 

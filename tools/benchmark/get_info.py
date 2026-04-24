@@ -8,6 +8,25 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../
 
 import argparse
 from collections import OrderedDict
+
+
+def _normalize_thread_env():
+    for env_name in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS'):
+        value = os.environ.get(env_name)
+        if value is None:
+            continue
+
+        try:
+            if int(value) > 0:
+                continue
+        except ValueError:
+            pass
+
+        os.environ[env_name] = '1'
+
+
+_normalize_thread_env()
+
 from calflops import calculate_flops
 from engine.core import YAMLConfig
 

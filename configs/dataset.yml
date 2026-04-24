@@ -1,5 +1,4 @@
 __include__: {
-  # './dataset/rsod_detection.yml',
   './dataset/visdrone_detection.yml',
   # './dataset/coco_detection.yml'
 }

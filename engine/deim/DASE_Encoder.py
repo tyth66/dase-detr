@@ -20,29 +20,25 @@ class TopkSampler(nn.Module):
     def forward(self, saliency_map, K):
         B, H, W = saliency_map.shape
         mask = self.mask_logits
+        if mask.shape[-2:] != (H, W):
+            mask = F.interpolate(mask.unsqueeze(1), size=(H, W), mode='bilinear', align_corners=False).squeeze(1)
 
         logits = saliency_map + mask  # [B, H, W]
-        
         soft_mask = F.softmax(logits.view(B, -1) / self.temperature, dim=-1)  # [B, H*W]
         topk_scores, topk_indices = torch.topk(soft_mask, K, dim=-1)          # [B, K]
-        return topk_scores, topk_indices
+        calibrated_map = soft_mask.view(B, H, W)
+        return topk_scores, topk_indices, calibrated_map
 
 class AdaptiveSparseWindowExtractor(nn.Module):
-    def __init__(self, dim, win_size=5, k_ratio=0.1, max_windows=1280, input_size=(40, 40), gamma=1.0, temperature=0.5):
+    def __init__(self, dim, win_size=5, k_ratio=0.1, max_windows=1280, input_size=(40, 40), gamma=1.0, temperature=0.5, lambda_scale=0.5):
         super().__init__()
         self.win_size = win_size
         self.pad = win_size // 2
         self.max_windows = max_windows
         self.k_ratio = k_ratio
-        self.gamma = gamma
+        self.gamma = nn.Parameter(torch.tensor(float(gamma)))
+        self.lambda_scale = float(lambda_scale)
         H, W = input_size
-
-        self.channel_pool = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),         # [B, C, 1, 1]
-            nn.Conv2d(dim, dim // 4, 1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(dim // 4, dim, 1),
-            nn.Sigmoid())
         self.topk_sampler = TopkSampler(H, W, temperature)
 
         self.register_buffer('offsets', self._precompute_offsets(win_size))
@@ -57,14 +53,12 @@ class AdaptiveSparseWindowExtractor(nn.Module):
     def forward(self, feat_map, saliency_map):
         """
         feat_map: [B, C, H, W]
-        saliency_map: [B, C, H, W]
+        saliency_map: [B, H, W]
         """
         B, C, H, W = feat_map.shape
         P = self.win_size * self.win_size
         K = min(int(self.k_ratio * H * W), self.max_windows)
-        weights = self.channel_pool(saliency_map)  
-        score_mask= (saliency_map * weights).sum(dim=1)  # [B, H, W]
-        _, topk_idx = self.topk_sampler(score_mask, K)
+        _, topk_idx, calibrated_map = self.topk_sampler(saliency_map, K)
         topk_coords = torch.stack([topk_idx // W, topk_idx % W], dim=-1)  # [B, K, 2]
         topk_coords[..., 0] = topk_coords[..., 0].clamp(self.pad, H - 1 - self.pad)
         topk_coords[..., 1] = topk_coords[..., 1].clamp(self.pad, W - 1 - self.pad)
@@ -77,17 +71,17 @@ class AdaptiveSparseWindowExtractor(nn.Module):
         feat_flat = feat_map.permute(0, 2, 3, 1).reshape(B, H * W, C)
         patches_flat = torch.gather(feat_flat, 1, lin_idx.unsqueeze(-1).expand(-1, -1, C))
         patches = patches_flat.view(B, K, P, C)
-        score_flat = score_mask.view(B, H * W)
+        score_flat = calibrated_map.view(B, H * W)
         patch_scores = torch.gather(score_flat, 1, lin_idx).view(B, K, P).unsqueeze(-1)
         patch_score_mean = patch_scores.mean(dim=2, keepdim=True)
         patch_mask = torch.sigmoid(self.gamma * (patch_scores - patch_score_mean))
         center = topk_coords.unsqueeze(2).float()  # [B, K, 1, 2]
         points = abs_coords.float()                # [B, K, P, 2]
         dist = torch.norm(points - center, dim=-1, keepdim=True)
-        distance_weight = torch.exp(-dist / (self.win_size * 0.5))
+        distance_weight = torch.exp(-dist / (self.lambda_scale * self.win_size))
         patch_mask = patch_mask * distance_weight  # [B, K, P, 1]
         patches = patches * patch_mask
-        return patches, topk_coords, offsets
+        return patches, topk_coords, offsets, calibrated_map
 
 class AttnGateFusion(nn.Module):
     def __init__(self, dim):
@@ -99,7 +93,7 @@ class AttnGateFusion(nn.Module):
     def forward(self, local_feat, global_feat):
         combined = torch.cat([local_feat, global_feat], dim=-1)
         gate_weights = self.gate(combined)  # [B, K, P, C]
-        out = gate_weights * local_feat + (1 - gate_weights) * global_feat
+        out = gate_weights * global_feat + (1 - gate_weights) * local_feat
         return out
 
 class DASE(nn.Module):
@@ -131,7 +125,7 @@ class DASE(nn.Module):
             nn.Linear(in_channels // 4, in_channels),
             nn.Sigmoid())
         self.fusion_linear = nn.Linear(in_channels * 2, in_channels)
-        self.win_importance = nn.Sequential(
+        self.patch_importance = nn.Sequential(
             nn.Linear(in_channels, in_channels),
             nn.ReLU(inplace=True),
             nn.Linear(in_channels, 1),
@@ -142,21 +136,19 @@ class DASE(nn.Module):
         B, C, H, W = x.shape
         saliency_map = self.scorer(x)
         identity = x.view(B, C, H * W).permute(0, 2, 1)
-        patches, coords, offsets = self.extractor(x, saliency_map)  # [B, K, P, C]
+        patches, coords, offsets, _ = self.extractor(x, saliency_map)  # [B, K, P, C]
         local_out = self.local_refine(patches)        # [B, K, P, C]
-        mean_pool = patches.mean(dim=2)
-        max_pool, _ = patches.max(dim=2)
+        mean_pool = local_out.mean(dim=2)
+        max_pool, _ = local_out.max(dim=2)
         attn_weights = self.channel_attn(mean_pool)
-        weighted_pool = (patches * attn_weights.unsqueeze(2)).sum(dim=2)
+        weighted_pool = (local_out * attn_weights.unsqueeze(2)).sum(dim=2)
         concat = torch.cat([max_pool, weighted_pool], dim=-1)
         sparse_token = self.fusion_linear(concat).unsqueeze(2)
         sparse_out = self.sparse_attn(sparse_token, coords)   # [B, K, 1, C]
         sparse_out = sparse_out.expand(-1, -1, patches.shape[2], -1)  # [B, K, P, C]
         fused_out = self.attn_gate(local_out, sparse_out)
-        win_feat = fused_out.mean(dim=2)  # [B, K, C]
-        importance = self.win_importance(win_feat).unsqueeze(2).expand(-1, -1, patches.shape[2], -1)
-        patches_out = fused_out * importance
-        out = self.Sparse_Window_Aggregation(patches_out, coords, importance, offsets, H, W)
+        importance = self.patch_importance(fused_out)
+        out = self.Sparse_Window_Aggregation(fused_out, coords, importance, offsets, H, W)
         out = self.norm(out + identity)
         return out
     
@@ -167,6 +159,11 @@ class DASE(nn.Module):
         abs_coords = coords.unsqueeze(2) + offsets.view(1, 1, P, 2)
         abs_coords[..., 0] = abs_coords[..., 0].clamp(0, H - 1)
         abs_coords[..., 1] = abs_coords[..., 1].clamp(0, W - 1)
+        center = coords.unsqueeze(2).float()
+        points = abs_coords.float()
+        dist = torch.norm(points - center, dim=-1, keepdim=True)
+        distance_weight = torch.exp(-dist / max(1.0, self.win * 0.5))
+        importance = importance * distance_weight
         linear_idx = abs_coords[..., 0] * W + abs_coords[..., 1]
         linear_idx = linear_idx.reshape(B, -1)
         patches_flat = patches.reshape(B, K * P, C)
@@ -194,9 +191,9 @@ class DASE_Encoder(nn.Module):
                  dim_feedforward = 1024,
                  nhead=8, 
                  dropout=0.0,
-                 use_encoder_idx=[0, 1, 2], 
-                 k_ratio=[0.25, 0.5, 0.75],
-                 win_size=[7, 5, 3], 
+                 use_encoder_idx=[0, 2], 
+                 k_ratio=[0.25, None, 0.75],
+                 win_size=[5, None, 3], 
                  input_size=[80, 40, 20],
                  expansion=1, 
                  depth_mult=1,

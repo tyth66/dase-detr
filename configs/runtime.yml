@@ -3,7 +3,7 @@ output_dir: './logs'
 checkpoint_freq: -1
 
 
-sync_bn: True
+sync_bn: False
 find_unused_parameters: False
 
 
