@@ -11,7 +11,7 @@ python train.py -c configs/dase_detr/dase_dfine_n.yml --device cuda
 ```
 
 ```bash
-python train.py -c configs/dase_detr/dase_dfine_n.yml --resume path/to/last.pth --test-only
+python train.py -c configs/dase_detr/dase_dfine_n.yml --resume visdrone/SOTA/dase_dfine_n/train_001/best_stg2.pth --test-only
 ```
 
 ```bash

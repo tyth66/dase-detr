@@ -6,67 +6,49 @@ __include__: [
   '../base/dfine_hgnetv2.yml',
 ]
 
-output_dir: ./runs/dfine_hgnetv2_n
+output_dir: ./runs/dfine_hgnetv2_m
 
 DEIM:
   backbone: HGNetv2
 
 
 HGNetv2:
-  name: 'B0'
+  name: 'B2'
   return_idx: [1, 2, 3]
   freeze_at: -1
   freeze_norm: False
   use_lab: True
 
 
-HybridEncoder:
-  in_channels: [256, 512, 1024]
-  feat_strides: [8, 16, 32]
-
-  # intra
-  hidden_dim: 128
-  use_encoder_idx: [2]
-  dim_feedforward: 512
-
-  # cross
-  expansion: 0.34
-  depth_mult: 0.5
-
-
 DFINETransformer:
-  feat_channels: [128, 128, 128]
-  feat_strides: [8, 16, 32]
-  hidden_dim: 128
-  dim_feedforward: 512
-  num_levels: 3
+  num_layers: 4  # 5 6
+  eval_idx: -1  # -2 -3
 
-  num_layers: 3
-  eval_idx: -1
-
-  num_points: [3, 6, 3]
+HybridEncoder:
+  in_channels: [384, 768, 1536]
+  hidden_dim: 256
+  depth_mult: 0.67
 
 optimizer:
   type: AdamW
   params:
     -
       params: '^(?=.*backbone)(?!.*norm|bn).*$'
-      lr: 0.0004
+      lr: 0.00002
     -
       params: '^(?=.*backbone)(?=.*norm|bn).*$'
-      lr: 0.0004
+      lr: 0.00002
       weight_decay: 0.
     -
       params: '^(?=.*(?:encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
       weight_decay: 0.
 
-  lr: 0.0008
+  lr: 0.0002
   betas: [0.9, 0.999]
   weight_decay: 0.0001
 
-
 # Increase to search for the optimal ema
-epoches: 132 # 148 + 4n
+epoches: 132 # 120 + 4n
 train_dataloader:
   total_batch_size: 8
   dataset:

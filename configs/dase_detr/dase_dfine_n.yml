@@ -18,8 +18,8 @@ DASE_Encoder:
   nhead: 8
   dropout: 0.1
 
-  k_ratio: [0.25, None, 0.75]
-  win_size: [5, None, 3]
+  k_ratio: [0.25, 0.5, 0.75]
+  win_size: [5, 3, 3]
   input_size: [80, 40, 20]
 
   # cross
@@ -45,17 +45,17 @@ optimizer:
 
 
 # Increase to search for the optimal ema
-epoches: 132 # 148 + 4n
+epoches: 80 # 148 + 4n
 train_dataloader:
-  total_batch_size: 8
+  total_batch_size: 16
   dataset:
     transforms:
       policy:
-        epoch: 120
+        epoch: 72
   collate_fn:
-    stop_epoch: 120
+    stop_epoch: 72
     ema_restart_decay: 0.9999
     base_size_repeat: ~
 
 val_dataloader:
-  total_batch_size: 8
+  total_batch_size: 16

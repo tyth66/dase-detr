@@ -1,5 +1,6 @@
 __include__: {
-  './dataset/visdrone_detection.yml',
+  './dataset/tt100k_detection.yml'
+  # './dataset/visdrone_detection.yml',
   # './dataset/coco_detection.yml'
 }
 

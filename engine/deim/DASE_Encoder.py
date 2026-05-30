@@ -134,8 +134,8 @@ class DASE(nn.Module):
             
     def forward(self, x):
         B, C, H, W = x.shape
-        saliency_map = self.scorer(x)
         identity = x.view(B, C, H * W).permute(0, 2, 1)
+        saliency_map = self.scorer(x)
         patches, coords, offsets, _ = self.extractor(x, saliency_map)  # [B, K, P, C]
         local_out = self.local_refine(patches)        # [B, K, P, C]
         mean_pool = local_out.mean(dim=2)
@@ -151,7 +151,6 @@ class DASE(nn.Module):
         out = self.Sparse_Window_Aggregation(fused_out, coords, importance, offsets, H, W)
         out = self.norm(out + identity)
         return out
-    
     
     def Sparse_Window_Aggregation(self, patches, coords, importance, offsets, H, W):
         B, K, P, C = patches.shape

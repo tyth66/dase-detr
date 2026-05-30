@@ -16,6 +16,9 @@ from engine.misc import dist_utils
 from engine.core import YAMLConfig, yaml_utils
 from engine.solver import TASKS
 
+import torch.multiprocessing as mp
+mp.set_sharing_strategy("file_system")
+
 debug=False
 
 if debug:
@@ -65,13 +68,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # priority 0
-    parser.add_argument('-c', '--config', type=str, default='configs/dase_detr/dase_deim_dfine_n.yml')
+    parser.add_argument('-c', '--config', type=str, default='configs/dase_detr/dase_dfine_n.yml')
     parser.add_argument('-r', '--resume', type=str, help='resume from checkpoint')
     parser.add_argument('-t', '--tuning', type=str, help='tuning from checkpoint')
+    parser.add_argument('-o', '--output-dir', type=str, default='tt100k/dase_dfine_n')
     parser.add_argument('-d', '--device', type=str)
     parser.add_argument('--seed', type=int, default='0')
-    parser.add_argument('--use-amp', action='store_true', default=True)
-    parser.add_argument('--output-dir', type=str, default='./visdrone/SOTA/dase_deim_dfine_n')
+    parser.add_argument('--use-amp', action='store_true', default=False)
     parser.add_argument('--summary-dir', type=str, help='tensorboard summry')
     parser.add_argument('--test-only', action='store_true', default=False,)
 
@@ -84,5 +87,4 @@ if __name__ == '__main__':
 
     parser.add_argument('--local-rank', type=int, help='local rank id')
     args = parser.parse_args()
-
     main(args)
